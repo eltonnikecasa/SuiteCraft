@@ -4,7 +4,7 @@ export type Platform = "linux-x86_64";
 export interface AssetRule { extensions: string[]; include: string[]; exclude: string[]; architecture: "x86_64" }
 export interface CatalogApp {
   schemaVersion: 1; id: string; name: string; description: string; category: string;
-  repositoryUrl?: string; iconUrl?: string; platform: Platform; packageType: PackageType;
+  repositoryUrl?: string; iconUrl?: string; summary?: string; platform: Platform; packageType: PackageType;
   assetRule: AssetRule; origin?: "default" | "manual"; disabled?: boolean;
 }
 export interface CatalogOverride { name?: string; repositoryUrl?: string | null }

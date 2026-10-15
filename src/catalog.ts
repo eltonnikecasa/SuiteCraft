@@ -16,8 +16,24 @@ const defaultRepositories: Record<string, string> = {
   solidcraft: "https://github.com/bherbruck/solidcraft"
 };
 const names = ["DeckCraft", "SoundCraft", "GridCraft", "FilmCraft", "WordCraft", "PhotoCraft", "VectorCraft", "LightCraft", "EffectCraft", "DesignCraft", "PdfCraft", "CADCraft", "SolidCraft"];
+const officialSummaries: Record<string, string> = {
+  deckcraft: "Presentations and slide shows: an open-source, clean-room reimplementation of Microsoft PowerPoint in pure Rust.",
+  soundcraft: "An open-source, clean-room reimplementation of Avid Pro Tools in pure Rust.",
+  gridcraft: "An open-source, clean-room spreadsheet in pure Rust.",
+  filmcraft: "An open-source nonlinear video editor written from scratch in pure Rust.",
+  wordcraft: "An open-source, clean-room reimplementation of Microsoft Word in pure Rust.",
+  photocraft: "An open-source photo editor written from scratch in pure Rust.",
+  vectorcraft: "An open-source vector art tool written from scratch in pure Rust.",
+  lightcraft: "An open-source non-destructive photo editor written from scratch in pure Rust.",
+  effectcraft: "An open-source motion graphics and compositing tool written from scratch in pure Rust.",
+  designcraft: "An open-source page and layout design editor written from scratch in pure Rust.",
+  pdfcraft: "An open-source PDF reader and editor written from scratch in pure Rust.",
+  cadcraft: "Computer-aided design and drafting in an open-source, clean-room AutoCAD-style app.",
+  solidcraft: "An open-source parametric 3D CAD application built in pure Rust."
+};
 const base = (name: string, repositoryUrl?: string): CatalogApp => ({
   schemaVersion: 1, id: name.toLowerCase(), name, description: name.toLowerCase(),
+  summary: officialSummaries[name.toLowerCase()],
   category: name === "SolidCraft" || name === "CADCraft" ? "engineering" : "creativity",
   repositoryUrl, platform: "linux-x86_64", packageType: "appimage",
   assetRule: { extensions: [".appimage"], include: ["x86_64", "amd64"], exclude: ["arm", "aarch64", "zsync", "sha256", "debug"], architecture: "x86_64" },

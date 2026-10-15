@@ -1,17 +1,20 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import {
   Box, Check, Download, ExternalLink, FolderCog, LoaderCircle, PackageOpen,
   Eye, EyeOff, Pencil, Play, Plus, RefreshCw, Search, Settings, Trash2, X
 } from "lucide-react";
 import { api, isTauri } from "./api";
-import { cardState, hasCatalogConflict, manualId, mergeCatalog, newer, normalizeGithubUrl, overrideDefaultEntry, removeManualEntry, setCatalogDisabled } from "./catalog";
+import { hasCatalogConflict, manualId, mergeCatalog, newer, normalizeGithubUrl, overrideDefaultEntry, removeManualEntry, setCatalogDisabled } from "./catalog";
+import { fallbackLabel, isContextMenuKey, launcherActions, type LauncherAction } from "./launcher";
 import { resolveLocale, translate, type LanguagePreference, type TranslationKey } from "./i18n";
 import { loadCatalogState, saveCatalogState } from "./storage";
 import type { Activity, CatalogApp, InstalledApp, ReleaseInfo } from "./types";
 import "./icon.css";
 import "./catalog.css";
+import "./launcher.css";
 
 type Filter = "all" | "installed" | "available" | "updates";
+type ContextMenuState = { appId: string; x: number; y: number };
 const filterKeys: Record<Filter, TranslationKey> = {
   all: "nav.all", installed: "nav.installed", available: "nav.available", updates: "nav.updates"
 };
@@ -33,12 +36,13 @@ export default function App() {
   const [rootWritable, setRootWritable] = useState(false);
   const [activity, setActivity] = useState<Record<string, Activity>>({});
   const [notice, setNotice] = useState("");
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>();
+  const contextMenuRef = useRef<HTMLDivElement>(null);
   const allApps = useMemo(() => mergeCatalog(catalogState), [catalogState]);
   const apps = useMemo(() => allApps.filter(app => !app.disabled), [allApps]);
   const installedMap = useMemo(() => Object.fromEntries(installed.map(item => [item.appId, item])), [installed]);
-  const hasUpdate = (id: string) => installedMap[id] && releases[id] && newer(releases[id].version, installedMap[id].version);
+  const hasUpdate = (id: string) => Boolean(installedMap[id] && releases[id]?.asset && newer(releases[id].version, installedMap[id].version));
   const description = (app: CatalogApp) => t((app.origin === "manual" ? "catalog.custom.description" : `catalog.${app.id}.description`) as TranslationKey);
-  const category = (app: CatalogApp) => t(app.origin === "manual" ? "catalog.category.custom" : (app.id === "solidcraft" || app.id === "cadcraft") ? "catalog.category.engineering" : "catalog.category.creativity");
   const visible = apps.filter(app => {
     const hit = `${app.name} ${description(app)}`.toLowerCase().includes(query.toLowerCase());
     return hit && (filter === "all" || (filter === "installed" && installedMap[app.id]) || (filter === "available" && !installedMap[app.id]) || (filter === "updates" && hasUpdate(app.id)));
@@ -78,6 +82,27 @@ export default function App() {
       api.releases(apps.filter(app => app.repositoryUrl)).then(setReleases).catch(() => undefined);
     }
   }, []); // Initial desktop state only.
+  useEffect(() => {
+    if (!contextMenu) return;
+    contextMenuRef.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
+    const closeOutside = (event: PointerEvent) => {
+      if (!contextMenuRef.current?.contains(event.target as Node)) setContextMenu(undefined);
+    };
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") setContextMenu(undefined);
+    };
+    const close = () => setContextMenu(undefined);
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside);
+      document.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [contextMenu]);
 
   const changeLanguage = async (value: LanguagePreference) => {
     setPreference(value);
@@ -137,6 +162,42 @@ export default function App() {
     try { await api.remove(app.id); setInstalled(state => state.filter(item => item.appId !== app.id)); setInstalledIcons(state => { const next = { ...state }; delete next[app.id]; return next; }); setNotice(t("status.removed", { name: app.name })); }
     catch { setNotice(t("error.remove", { name: app.name })); }
   };
+  const launch = async (app: CatalogApp) => {
+    try { await api.launch(app.id); }
+    catch (error) { setNotice(`${t("error.launch", { name: app.name })} ${String(error)}`); }
+  };
+  const unavailableReason = (app: CatalogApp) => {
+    const release = releases[app.id];
+    if (!app.repositoryUrl) return t("card.sourcePending");
+    if (release?.reason && !release.version) return release.reason;
+    if (!release) return t("card.releasePending");
+    if (!release.asset) return release.reason || t("card.assetUnavailable");
+    if (!rootWritable) return t("settings.directoryBlocked");
+    return undefined;
+  };
+  const openContextMenu = (app: CatalogApp, x: number, y: number) => {
+    const width = 236, height = 290, margin = 8;
+    setContextMenu({ appId: app.id, x: Math.max(margin, Math.min(x, window.innerWidth - width - margin)), y: Math.max(margin, Math.min(y, window.innerHeight - height - margin)) });
+  };
+  const activate = (app: CatalogApp, event: MouseEvent<HTMLButtonElement>) => {
+    if (activity[app.id]) return;
+    if (installedMap[app.id]) { void launch(app); return; }
+    const reason = unavailableReason(app);
+    if (!reason) { void install(app); return; }
+    setNotice(reason);
+    const bounds = event.currentTarget.getBoundingClientRect();
+    openContextMenu(app, bounds.left + bounds.width / 2, bounds.top + bounds.height / 2);
+  };
+  const configure = (app: CatalogApp) => { editEntry(app); setSettings(true); };
+  const runMenuAction = (action: LauncherAction, app: CatalogApp) => {
+    setContextMenu(undefined);
+    if (action === "open") void launch(app);
+    else if (action === "install" || action === "update") void install(app);
+    else if (action === "refresh") void refreshOne(app);
+    else if (action === "configure") configure(app);
+    else void removeInstalled(app);
+  };
+  const menuLabel = (action: LauncherAction) => t((action === "refresh" ? "action.verifyUpdates" : action === "configure" ? "action.configure" : `action.${action}`) as TranslationKey);
 
   return <div className="shell">
     <aside>
@@ -163,25 +224,42 @@ export default function App() {
         <div><span>{t("summary.updates")}</span><strong>{apps.filter(app => hasUpdate(app.id)).length}</strong></div>
         <button onClick={() => refresh(true)}><RefreshCw /> {t("action.checkUpdates")}</button>
       </section>
-      <section className="grid">{visible.map(app => {
+      <section className="launcher-grid" aria-label={t(filterKeys[filter])}>{visible.map(app => {
         const local = installedMap[app.id], release = releases[app.id], busy = activity[app.id];
-        const state = cardState(local, release, Boolean(busy));
-        const reason = !app.repositoryUrl ? t("card.sourcePending") : release?.reason || (!release ? t("card.releasePending") : !release.asset ? t("card.assetUnavailable") : !rootWritable ? t("settings.directoryBlocked") : undefined);
-        const stateLabel = !reason && state === "install" ? t("card.stateReady") : !reason && state === "open" ? t("card.stateCurrent") : !reason && state === "update" ? t("card.stateUpdate") : undefined;
-        return <article className={!local ? "muted-app" : ""} key={app.id}>
-          <div className="card-top"><div className="app-icon">{(installedIcons[app.id] || app.iconUrl) && <img src={installedIcons[app.id] || app.iconUrl} alt="" />}</div><span className="category">{category(app)}</span>{app.origin === "manual" && <span className="custom">{t("card.custom")}</span>}</div>
-          <h2>{app.name}</h2><p>{description(app)}</p>
-          <div className="versions"><span>{t("card.installedVersion")} <b>{local?.version || "—"}</b></span><span>{t("card.latestVersion")} <b>{release?.version || "—"}</b></span></div>
-          {state === "checking" ? <button className="primary" disabled><LoaderCircle className="spin" /> {busy?.message || t("status.checking")}</button>
-            : state === "retry" ? <button className="primary" onClick={() => refreshOne(app)}><RefreshCw />{t("action.retry")}</button>
-            : state === "update" ? <div className="actions"><button className="primary" disabled={!rootWritable} title={!rootWritable ? t("settings.directoryBlocked") : undefined} onClick={() => install(app)}><Download />{t("action.update")}</button><button className="danger-icon" title={t("action.remove")} aria-label={t("action.remove")} onClick={() => removeInstalled(app)}><Trash2 /></button></div>
-            : state === "open" ? <div className="actions"><button className="secondary" onClick={() => api.launch(app.id).catch(error => setNotice(`${t("error.launch", { name: app.name })} ${String(error)}`))}><Play />{t("action.open")}</button><button className="danger-icon" title={t("action.remove")} aria-label={t("action.remove")} onClick={() => removeInstalled(app)}><Trash2 /></button></div>
-            : <button className="primary" disabled={!rootWritable || !release?.asset} title={reason} onClick={() => install(app)}><Download />{t("action.install")}</button>}
-          {reason && <small className="reason">{reason}</small>}
-          {stateLabel && <small className="reason">{stateLabel}</small>}
-        </article>;
+        const icon = installedIcons[app.id] || app.iconUrl;
+        const reason = unavailableReason(app);
+        const status = busy?.message || (busy ? t("status.checking") : release?.reason && !release.version ? release.reason : hasUpdate(app.id) ? t("card.stateUpdate") : local ? t("card.stateCurrent") : reason || t("card.stateReady"));
+        return <button type="button" className={`launcher-item ${local ? "is-installed" : "is-available"}`} key={app.id}
+          aria-describedby={`launcher-tip-${app.id}`} aria-label={`${app.name}. ${status}`} disabled={Boolean(busy)}
+          onClick={event => activate(app, event)}
+          onContextMenu={event => { event.preventDefault(); openContextMenu(app, event.clientX, event.clientY); }}
+          onKeyDown={(event: KeyboardEvent<HTMLButtonElement>) => { if (isContextMenuKey(event.key, event.shiftKey)) { event.preventDefault(); const bounds = event.currentTarget.getBoundingClientRect(); openContextMenu(app, bounds.left + bounds.width / 2, bounds.top + bounds.height / 2); } }}>
+          <span className="launcher-icon" aria-hidden="true">
+            {icon ? <img src={icon} alt="" /> : <span className="launcher-fallback">{fallbackLabel(app.name)}</span>}
+            {busy && <span className="launcher-progress"><LoaderCircle className="spin" /></span>}
+            {!busy && hasUpdate(app.id) && <span className="launcher-badge update" />}
+            {!busy && release?.reason && !release.version && <span className="launcher-badge error" />}
+          </span>
+          <span className="launcher-name" title={app.name}>{app.name}</span>
+          <span role="tooltip" id={`launcher-tip-${app.id}`} className="launcher-tooltip"><strong>{app.name}</strong><span>{app.summary || description(app)}</span><small>{status}</small></span>
+          <span className="sr-only" aria-live="polite">{status}</span>
+        </button>;
       })}
       {visible.length === 0 && <div className="empty"><PackageOpen /><h2>{t("empty.title")}</h2><p>{t("empty.description")}</p></div>}</section>
+      {contextMenu && (() => {
+        const app = apps.find(item => item.id === contextMenu.appId);
+        if (!app) return null;
+        const local = Boolean(installedMap[app.id]), release = releases[app.id], reason = unavailableReason(app);
+        const actions = launcherActions(local, Boolean(release?.asset), Boolean(hasUpdate(app.id)));
+        return <div ref={contextMenuRef} className="launcher-menu" role="menu" aria-label={app.name} style={{ left: contextMenu.x, top: contextMenu.y }}>
+          <strong>{app.name}</strong>
+          {actions.map(action => <button key={action} role="menuitem" onClick={() => runMenuAction(action, app)} disabled={Boolean(activity[app.id]) || (action === "install" && Boolean(reason)) || (action === "refresh" && !app.repositoryUrl)}>
+            {action === "open" ? <Play /> : action === "install" || action === "update" ? <Download /> : action === "refresh" ? <RefreshCw /> : action === "configure" ? <Settings /> : <Trash2 />}
+            {menuLabel(action)}
+          </button>)}
+          {reason && <small className="launcher-menu-reason">{reason}</small>}
+        </div>;
+      })()}
     </main>
     {settings && <div className="overlay" onMouseDown={event => event.target === event.currentTarget && setSettings(false)}>
       <section className="panel">

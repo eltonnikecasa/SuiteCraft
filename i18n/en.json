@@ -25,6 +25,8 @@
   "action.add": "Add",
   "action.save": "Save",
   "action.edit": "Edit",
+  "action.configure": "Configure",
+  "action.verifyUpdates": "Check for updates",
   "action.cancelEdit": "Cancel editing",
   "status.checking": "Checking…",
   "status.downloading": "Downloading and validating…",
