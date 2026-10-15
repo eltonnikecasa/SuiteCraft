@@ -1,0 +1,58 @@
+# JavaScript dependencies and package-manager caches
+node_modules/
+.npm/
+.pnpm-store/
+.yarn/cache/
+.yarn/unplugged/
+
+# Frontend build and test output
+dist/
+build/
+coverage/
+.vite/
+
+# Rust and Tauri build output
+target/
+src-tauri/target/
+.tauri/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Local runtime data and downloaded packages
+runtime/
+downloads/
+*.AppImage
+*.AppImage.zsync
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Editor and IDE settings
+.idea/
+.vscode/
+*.code-workspace
+
+# Local agent and cloud-tool state
+.agents/
+.aws/
+.codex/
+
+# Operating-system files
+.DS_Store
+Thumbs.db
+Desktop.ini

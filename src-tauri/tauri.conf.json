@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SuiteCraft",
+  "version": "0.1.0",
+  "identifier": "org.suitecraft.launcher",
+  "build": { "beforeDevCommand": "npm run dev", "devUrl": "http://localhost:1420", "beforeBuildCommand": "npm run build", "frontendDist": "../dist" },
+  "app": { "windows": [{ "title": "SuiteCraft", "width": 1180, "height": 760, "minWidth": 760, "minHeight": 560, "resizable": true }], "security": { "csp": "default-src 'self'; connect-src 'self' https://api.github.com https://github.com https://objects.githubusercontent.com https://release-assets.githubusercontent.com; img-src 'self' asset: https: data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com" } },
+  "bundle": { "active": false, "targets": "all" }
+}

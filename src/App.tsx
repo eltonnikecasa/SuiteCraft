@@ -1,0 +1,188 @@
+import { useEffect, useMemo, useState } from "react";
+import {
+  Box, Check, Download, ExternalLink, FolderCog, LoaderCircle, PackageOpen,
+  Pencil, Play, Plus, RefreshCw, Search, Settings, Trash2, X
+} from "lucide-react";
+import { api, isTauri } from "./api";
+import { embeddedCatalog, normalizeGithubUrl } from "./catalog";
+import { resolveLocale, translate, type LanguagePreference, type TranslationKey } from "./i18n";
+import { loadCustomCatalog, saveCustomCatalog } from "./storage";
+import type { Activity, CatalogApp, InstalledApp, ReleaseInfo } from "./types";
+
+type Filter = "all" | "installed" | "available" | "updates";
+const filterKeys: Record<Filter, TranslationKey> = {
+  all: "nav.all", installed: "nav.installed", available: "nav.available", updates: "nav.updates"
+};
+const versionParts = (value: string) => value.replace(/^v/i, "").split(/[.-]/).map(x => /^\d+$/.test(x) ? Number(x) : x);
+export function newer(remote: string, local: string) {
+  const a = versionParts(remote), b = versionParts(local);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const x = a[i] ?? 0, y = b[i] ?? 0;
+    if (x === y) continue;
+    if (typeof x === "number" && typeof y === "number") return x > y;
+    return String(x).localeCompare(String(y), undefined, { numeric: true }) > 0;
+  }
+  return false;
+}
+
+export default function App() {
+  const [preference, setPreference] = useState<LanguagePreference>("system");
+  const locale = resolveLocale(preference, navigator.language);
+  const t = (key: TranslationKey, values?: Record<string, string | number>) => translate(locale, key, values);
+  const [custom, setCustom] = useState(loadCustomCatalog);
+  const [installed, setInstalled] = useState<InstalledApp[]>([]);
+  const [releases, setReleases] = useState<Record<string, ReleaseInfo>>({});
+  const [filter, setFilter] = useState<Filter>("all");
+  const [query, setQuery] = useState("");
+  const [settings, setSettings] = useState(false);
+  const [repo, setRepo] = useState("");
+  const [editingId, setEditingId] = useState<string>();
+  const [root, setRoot] = useState(() => localStorage.getItem("suitecraft.install-root") || "/opt/suitecraft/apps");
+  const [rootWritable, setRootWritable] = useState(false);
+  const [activity, setActivity] = useState<Record<string, Activity>>({});
+  const [notice, setNotice] = useState("");
+  const apps = useMemo(() => [...embeddedCatalog, ...custom], [custom]);
+  const installedMap = useMemo(() => Object.fromEntries(installed.map(item => [item.appId, item])), [installed]);
+  const hasUpdate = (id: string) => installedMap[id] && releases[id] && newer(releases[id].version, installedMap[id].version);
+  const description = (app: CatalogApp) => t((app.custom ? "catalog.custom.description" : `catalog.${app.id}.description`) as TranslationKey);
+  const category = (app: CatalogApp) => t(app.custom ? "catalog.category.custom" : (app.id === "solidcraft" || app.id === "cadcraft") ? "catalog.category.engineering" : "catalog.category.creativity");
+  const visible = apps.filter(app => {
+    const hit = `${app.name} ${description(app)}`.toLowerCase().includes(query.toLowerCase());
+    return hit && (filter === "all" || (filter === "installed" && installedMap[app.id]) || (filter === "available" && !installedMap[app.id]) || (filter === "updates" && hasUpdate(app.id)));
+  });
+
+  const inspect = (value: string) => {
+    if (!isTauri()) { setRootWritable(false); return; }
+    api.inspectDirectory(value).then(result => setRootWritable(result.writable)).catch(() => setRootWritable(false));
+  };
+  const refresh = async (force = false) => {
+    if (!isTauri()) { setNotice(t("error.preview")); return; }
+    const configured = apps.filter(app => app.repositoryUrl);
+    configured.forEach(app => setActivity(state => ({ ...state, [app.id]: { appId: app.id, kind: "loading" } })));
+    try { setReleases(await api.releases(configured, force)); }
+    catch { setNotice(t("error.releases")); }
+    finally { setActivity({}); }
+  };
+  useEffect(() => {
+    inspect(root);
+    if (isTauri()) {
+      api.languagePreference().then(value => setPreference(value)).catch(() => setPreference("system"));
+      api.installed().then(setInstalled).catch(() => undefined);
+      api.releases(apps.filter(app => app.repositoryUrl)).then(setReleases).catch(() => undefined);
+    }
+  }, []); // Initial desktop state only.
+
+  const changeLanguage = async (value: LanguagePreference) => {
+    setPreference(value);
+    if (isTauri()) {
+      try { await api.setLanguagePreference(value); }
+      catch { setNotice(translate(resolveLocale(value, navigator.language), "error.languageSave")); }
+    }
+  };
+  const storeCustom = (next: CatalogApp[]) => { setCustom(next); saveCustomCatalog(next); };
+  const add = () => {
+    const normalized = normalizeGithubUrl(repo);
+    if (!normalized) { setNotice(t("error.invalidRepository")); return; }
+    const parts = normalized.split("/");
+    const name = parts.at(-1)!;
+    const id = `custom-${parts.at(-2)}-${name}`.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+    if (apps.some(app => app.id === id && app.id !== editingId)) { setNotice(t("error.duplicateRepository")); return; }
+    const entry: CatalogApp = {
+      schemaVersion: 1, id, name, description: "custom", category: "custom", repositoryUrl: normalized,
+      platform: "linux-x86_64", packageType: "appimage",
+      assetRule: { extensions: [".appimage"], include: ["x86_64", "amd64"], exclude: ["arm", "aarch64", "zsync", "sha256", "debug"], architecture: "x86_64" },
+      custom: true
+    };
+    storeCustom(editingId ? [...custom.filter(item => item.id !== editingId), entry] : [...custom, entry]);
+    setRepo(""); setEditingId(undefined); setNotice(t(editingId ? "status.customUpdated" : "status.customAdded"));
+  };
+  const install = async (app: CatalogApp) => {
+    const release = releases[app.id];
+    if (!release?.asset || !rootWritable) return;
+    const updating = Boolean(installedMap[app.id]);
+    if (!window.confirm(t(updating ? "confirm.update" : "confirm.install", { name: app.name }))) return;
+    setActivity(state => ({ ...state, [app.id]: { appId: app.id, kind: "installing", message: t("status.downloading") } }));
+    try {
+      const item = await api.install(app, release, root);
+      setInstalled(state => [...state.filter(value => value.appId !== app.id), item]);
+      setNotice(t(updating ? "status.updated" : "status.installed", { name: app.name }));
+    } catch { setNotice(t("error.install", { name: app.name })); }
+    finally { setActivity(state => { const next = { ...state }; delete next[app.id]; return next; }); }
+  };
+  const removeInstalled = async (app: CatalogApp) => {
+    if (!window.confirm(t("confirm.remove", { name: app.name }))) return;
+    try { await api.remove(app.id); setInstalled(state => state.filter(item => item.appId !== app.id)); setNotice(t("status.removed", { name: app.name })); }
+    catch { setNotice(t("error.remove", { name: app.name })); }
+  };
+
+  return <div className="shell">
+    <aside>
+      <div className="brand"><span className="logo"><Box /></span><div><strong>SuiteCraft</strong><small>{t("app.subtitle")}</small></div></div>
+      <nav>{(Object.keys(filterKeys) as Filter[]).map(id =>
+        <button className={filter === id ? "active" : ""} onClick={() => setFilter(id)} key={id}>
+          {id === "all" ? <PackageOpen /> : id === "installed" ? <Check /> : id === "available" ? <Download /> : <RefreshCw />}
+          <span>{t(filterKeys[id])}</span>{id === "updates" && apps.filter(app => hasUpdate(app.id)).length > 0 && <b>{apps.filter(app => hasUpdate(app.id)).length}</b>}
+        </button>)}</nav>
+      <div className="aside-note"><span></span><div><strong>Fedora · Linux</strong><small>AppImages x86_64</small></div></div>
+    </aside>
+    <main>
+      <header><div><p>{t("header.catalog")}</p><h1>{t(filterKeys[filter])}</h1></div>
+        <div className="header-actions">
+          <label className="search"><Search /><input value={query} onChange={event => setQuery(event.target.value)} placeholder={t("search.placeholder")} aria-label={t("search.placeholder")} /></label>
+          <button className="icon-button" title={t("a11y.refresh")} aria-label={t("a11y.refresh")} onClick={() => refresh(true)}><RefreshCw /></button>
+          <button className="icon-button" title={t("a11y.settings")} aria-label={t("a11y.settings")} onClick={() => setSettings(true)}><Settings /></button>
+        </div>
+      </header>
+      {notice && <div className="notice"><span>{notice}</span><button aria-label={t("a11y.close")} onClick={() => setNotice("")}><X /></button></div>}
+      <section className="summary">
+        <div><span>{t("summary.apps")}</span><strong>{apps.length}</strong></div>
+        <div><span>{t("summary.installed")}</span><strong>{installed.length}</strong></div>
+        <div><span>{t("summary.updates")}</span><strong>{apps.filter(app => hasUpdate(app.id)).length}</strong></div>
+        <button onClick={() => refresh(true)}><RefreshCw /> {t("action.checkUpdates")}</button>
+      </section>
+      <section className="grid">{visible.map(app => {
+        const local = installedMap[app.id], release = releases[app.id], busy = activity[app.id];
+        const reason = !app.repositoryUrl ? t("card.sourcePending") : !release ? t("card.releasePending") : !release.asset ? t("card.assetUnavailable") : !rootWritable ? t("settings.directoryBlocked") : undefined;
+        return <article className={!local ? "muted-app" : ""} key={app.id}>
+          <div className="card-top"><div className="app-icon">{app.iconUrl ? <img src={app.iconUrl} alt="" /> : <Box />}</div><span className="category">{category(app)}</span>{app.custom && <span className="custom">{t("card.custom")}</span>}</div>
+          <h2>{app.name}</h2><p>{description(app)}</p>
+          <div className="versions"><span>{t("card.installedVersion")} <b>{local?.version || "—"}</b></span><span>{t("card.latestVersion")} <b>{release?.version || "—"}</b></span></div>
+          {busy ? <button className="primary" disabled><LoaderCircle className="spin" /> {busy.message || t("status.checking")}</button>
+            : local ? <div className="actions">
+              <button className="secondary" onClick={() => api.launch(app.id).catch(() => setNotice(t("error.launch", { name: app.name })))}><Play />{t("action.open")}</button>
+              {hasUpdate(app.id) && <button className="primary" disabled={!release.asset || !rootWritable} onClick={() => install(app)}>{t("action.update")}</button>}
+              <button className="danger-icon" title={t("action.remove")} aria-label={t("action.remove")} onClick={() => removeInstalled(app)}><Trash2 /></button>
+            </div>
+            : <button className="primary" disabled={!rootWritable || !release?.asset} title={reason} onClick={() => install(app)}><Download />{t("action.install")}</button>}
+          {reason && !local && <small className="reason">{reason}</small>}
+        </article>;
+      })}
+      {visible.length === 0 && <div className="empty"><PackageOpen /><h2>{t("empty.title")}</h2><p>{t("empty.description")}</p></div>}</section>
+    </main>
+    {settings && <div className="overlay" onMouseDown={event => event.target === event.currentTarget && setSettings(false)}>
+      <section className="panel">
+        <div className="panel-head"><div><p>{t("settings.eyebrow")}</p><h2>{t("settings.title")}</h2></div><button className="icon-button" aria-label={t("a11y.close")} onClick={() => setSettings(false)}><X /></button></div>
+        <div className="setting"><div className="setting-title"><Settings /><div><strong>{t("settings.language")}</strong><small>{t("settings.languageHelp")}</small></div></div>
+          <select className="language-select" value={preference} onChange={event => changeLanguage(event.target.value as LanguagePreference)} aria-label={t("settings.language")}>
+            <option value="system">{t("language.system")}</option><option value="pt-BR">{t("language.pt-BR")}</option><option value="en">{t("language.en")}</option>
+          </select>
+        </div>
+        <div className="setting"><div className="setting-title"><FolderCog /><div><strong>{t("settings.installDirectory")}</strong><small>{t("settings.optHelp")}</small></div></div>
+          <div className="input-row"><input value={root} onChange={event => setRoot(event.target.value)} aria-label={t("settings.installDirectory")} /><button onClick={() => { localStorage.setItem("suitecraft.install-root", root); inspect(root); }}>{t("action.apply")}</button></div>
+          <div className={rootWritable ? "ok" : "warning"}>{t(rootWritable ? "settings.directoryWritable" : "settings.directoryBlocked")}</div>
+          <button className="link-button" onClick={async () => { if (isTauri()) { const path = await api.homeInstallRoot(); setRoot(path); localStorage.setItem("suitecraft.install-root", path); inspect(path); } }}>{t("settings.useUserDirectory")}</button>
+        </div>
+        <div className="setting"><div className="setting-title"><Plus /><div><strong>{t(editingId ? "settings.editRepository" : "settings.addRepository")}</strong><small>{t("settings.repositoryHelp")}</small></div></div>
+          <div className="input-row"><input value={repo} onChange={event => setRepo(event.target.value)} placeholder={t("settings.repositoryPlaceholder")} aria-label={t(editingId ? "settings.editRepository" : "settings.addRepository")} /><button onClick={add}>{t(editingId ? "action.save" : "action.add")}</button></div>
+          {editingId && <button className="link-button" onClick={() => { setEditingId(undefined); setRepo(""); }}>{t("action.cancelEdit")}</button>}
+        </div>
+        {custom.length > 0 && <div className="custom-list"><strong>{t("settings.customEntries")}</strong>{custom.map(app =>
+          <div key={app.id}><span>{app.name}<small>{app.repositoryUrl}</small></span>
+            <a href={app.repositoryUrl} target="_blank" rel="noreferrer" aria-label={t("a11y.openRepository", { name: app.name })} title={t("a11y.openRepository", { name: app.name })}><ExternalLink /></a>
+            <button title={t("action.edit")} aria-label={t("action.edit")} onClick={() => { setEditingId(app.id); setRepo(app.repositoryUrl || ""); }}><Pencil /></button>
+            <button title={t("action.remove")} aria-label={t("action.remove")} onClick={() => { if (window.confirm(t("confirm.removeCatalog", { name: app.name }))) storeCustom(custom.filter(item => item.id !== app.id)); }}><Trash2 /></button>
+          </div>)}</div>}
+      </section>
+    </div>}
+  </div>;
+}
