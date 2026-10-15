@@ -176,7 +176,20 @@ export default function App() {
   };
   const removeInstalled = async (app: CatalogApp) => {
     if (!window.confirm(t("confirm.remove", { name: app.name }))) return;
-    try { await api.remove(app.id); await loadInstalled(false); setInstalledIcons(state => { const next = { ...state }; delete next[app.id]; return next; }); setNotice(t("status.removed", { name: app.name })); }
+    try {
+      const artifacts = await api.integrations(app.id);
+      const external = artifacts.filter(item => item.external);
+      const removable = external.filter(item => item.removable);
+      const approved = external.length && window.confirm(t("confirm.removeExternal", {
+        count: external.length,
+        paths: external.map(item => `\n• ${item.path}\n  ${t(item.removable ? "integration.removable" : "integration.preserved")}`).join("")
+      })) ? removable.map(item => item.path) : [];
+      await api.remove(app.id, approved);
+      await loadInstalled(false);
+      setInstalledIcons(state => { const next = { ...state }; delete next[app.id]; return next; });
+      const preserved = external.length - approved.length;
+      setNotice(preserved ? t("status.removedWithIntegrations", { name: app.name, count: preserved }) : t("status.removed", { name: app.name }));
+    }
     catch { setNotice(t("error.remove", { name: app.name })); }
   };
   const launch = async (app: CatalogApp) => {

@@ -1,4 +1,4 @@
-use crate::models::{CatalogApp, DirectoryStatus, InstalledApp, ReleaseInfo};
+use crate::models::{CatalogApp, DirectoryStatus, InstalledApp, IntegrationArtifact, ReleaseInfo};
 use crate::platform;
 use base64::Engine;
 use futures_util::StreamExt;
@@ -264,7 +264,7 @@ pub async fn install(
             let _ = fs::rename(&backup, &final_path);
             let _ = platform::integrate(&app.id, &app.name, &final_path);
         } else {
-            let _ = platform::remove_integration(&app.id);
+            let _ = platform::remove_integrations(&app.id, &final_path, &[]);
         }
         return Err(format!(
             "Falha ao concluir a instalação; a versão anterior foi restaurada: {error}"
@@ -307,12 +307,25 @@ pub async fn launch(id: String) -> Result<(), String> {
     if !path.is_file() {
         return Err("O AppImage instalado não foi encontrado".into());
     }
-    tokio::process::Command::new(path)
+    let mut command = tokio::process::Command::new(path);
+    crate::child_env::configure(&mut command);
+    command
         .spawn()
         .map_err(|e| format!("Não foi possível abrir o app: {e}"))?;
     Ok(())
 }
-pub fn remove(id: String) -> Result<(), String> {
+pub fn integration_artifacts(id: String) -> Result<Vec<IntegrationArtifact>, String> {
+    if !valid_id(&id) {
+        return Err("ID inválido".into());
+    }
+    let item = read_installed()?
+        .into_iter()
+        .find(|item| item.app_id == id)
+        .ok_or("App não instalado")?;
+    platform::integration_artifacts(&id, Path::new(&item.executable_path))
+}
+
+pub fn remove(id: String, approved_integration_paths: Vec<String>) -> Result<(), String> {
     if !valid_id(&id) {
         return Err("ID inválido".into());
     }
@@ -327,10 +340,10 @@ pub fn remove(id: String) -> Result<(), String> {
     if !platform::inspect_root(path.parent().unwrap_or(Path::new("/"))).writable {
         return Err("O caminho registrado está fora da raiz de instalação permitida".into());
     }
+    platform::remove_integrations(&id, &path, &approved_integration_paths)?;
     if path.exists() {
         fs::remove_file(path).map_err(|e| e.to_string())?
     }
-    platform::remove_integration(&id)?;
     items.retain(|x| x.app_id != id);
     write_installed(&items)
 }

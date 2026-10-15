@@ -1,10 +1,11 @@
+mod child_env;
 mod github;
 mod install;
 mod localization;
 mod models;
 mod platform;
 use github::ReleaseCache;
-use models::{CatalogApp, DirectoryStatus, InstalledApp, ReleaseInfo};
+use models::{CatalogApp, DirectoryStatus, InstalledApp, IntegrationArtifact, ReleaseInfo};
 use std::collections::HashMap;
 
 #[tauri::command]
@@ -32,8 +33,12 @@ async fn launch_app(app_id: String) -> Result<(), String> {
     install::launch(app_id).await
 }
 #[tauri::command]
-fn remove_app(app_id: String) -> Result<(), String> {
-    install::remove(app_id)
+fn inspect_app_integrations(app_id: String) -> Result<Vec<IntegrationArtifact>, String> {
+    install::integration_artifacts(app_id)
+}
+#[tauri::command]
+fn remove_app(app_id: String, approved_integration_paths: Vec<String>) -> Result<(), String> {
+    install::remove(app_id, approved_integration_paths)
 }
 #[tauri::command]
 fn inspect_install_directory(path: String) -> DirectoryStatus {
@@ -64,6 +69,7 @@ pub fn run() {
             list_installed,
             install_app,
             launch_app,
+            inspect_app_integrations,
             remove_app,
             inspect_install_directory,
             suggest_user_install_root,

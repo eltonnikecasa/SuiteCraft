@@ -1,4 +1,4 @@
-use crate::models::DirectoryStatus;
+use crate::models::{DirectoryStatus, IntegrationArtifact};
 use std::path::{Path, PathBuf};
 
 pub fn user_install_root() -> Result<PathBuf, String> {
@@ -18,7 +18,10 @@ pub fn inspect_root(path: &Path) -> DirectoryStatus {
 pub fn integrate(_: &str, _: &str, _: &Path) -> Result<Option<PathBuf>, String> {
     Ok(None)
 }
-pub fn remove_integration(_: &str) -> Result<(), String> {
+pub fn integration_artifacts(_: &str, _: &Path) -> Result<Vec<IntegrationArtifact>, String> {
+    Ok(vec![])
+}
+pub fn remove_integrations(_: &str, _: &Path, _: &[String]) -> Result<(), String> {
     Ok(())
 }
 pub fn read_valid_icon(_: &Path) -> Result<Option<(&'static str, Vec<u8>)>, String> {

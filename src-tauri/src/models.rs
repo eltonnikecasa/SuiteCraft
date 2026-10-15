@@ -50,3 +50,13 @@ pub struct DirectoryStatus {
     pub writable: bool,
     pub reason: Option<String>,
 }
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IntegrationArtifact {
+    pub path: String,
+    pub kind: String,
+    pub external: bool,
+    pub removable: bool,
+    pub detail: String,
+}
