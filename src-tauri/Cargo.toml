@@ -25,6 +25,7 @@ dirs = "6"
 url = "2"
 chrono = { version = "0.4", features = ["serde"] }
 semver = "1"
+base64 = "0.22"
 
 [profile.release]
 strip = true

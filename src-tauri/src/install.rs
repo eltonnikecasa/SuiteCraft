@@ -1,4 +1,6 @@
 use crate::models::{CatalogApp, DirectoryStatus, InstalledApp, ReleaseInfo};
+use crate::platform;
+use base64::Engine;
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use std::{
@@ -43,70 +45,7 @@ fn write_installed(items: &[InstalledApp]) -> Result<(), String> {
     fs::rename(temp, path).map_err(|e| e.to_string())
 }
 pub fn inspect(path: &str) -> DirectoryStatus {
-    let target = Path::new(path);
-    if target.starts_with("/opt") {
-        return DirectoryStatus{writable:false,reason:Some("A instalação em /opt está bloqueada até existir um helper polkit auditado. Escolha um diretório pessoal.".into())};
-    }
-    let Some(home) = dirs::home_dir() else {
-        return DirectoryStatus {
-            writable: false,
-            reason: Some("Diretório pessoal indisponível".into()),
-        };
-    };
-    if !target.is_absolute() || !target.starts_with(&home) {
-        return DirectoryStatus {
-            writable: false,
-            reason: Some("Escolha um caminho absoluto dentro do seu diretório pessoal.".into()),
-        };
-    }
-    let check = if target.exists() {
-        target
-    } else {
-        target.ancestors().find(|x| x.exists()).unwrap_or(&home)
-    };
-    match fs::metadata(check) {
-        Ok(m) => DirectoryStatus {
-            writable: !m.permissions().readonly(),
-            reason: m
-                .permissions()
-                .readonly()
-                .then(|| "O diretório não permite escrita pelo usuário atual.".into()),
-        },
-        Err(e) => DirectoryStatus {
-            writable: false,
-            reason: Some(format!("Não foi possível acessar o diretório: {e}")),
-        },
-    }
-}
-fn desktop_escape(path: &Path) -> String {
-    format!(
-        "\"{}\"",
-        path.to_string_lossy()
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-    )
-}
-fn desktop_path(id: &str) -> Result<PathBuf, String> {
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| dirs::data_local_dir())
-        .ok_or("XDG_DATA_HOME indisponível")?;
-    Ok(base
-        .join("applications")
-        .join(format!("suitecraft-{id}.desktop")))
-}
-fn shortcut(app: &CatalogApp, item: &InstalledApp) -> Result<(), String> {
-    let path = desktop_path(&app.id)?;
-    fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
-    let icon = app
-        .icon_url
-        .as_ref()
-        .filter(|x| Path::new(x.as_str()).is_absolute())
-        .cloned()
-        .unwrap_or_else(|| "application-x-executable".into());
-    let body=format!("[Desktop Entry]\nType=Application\nName={}\nComment=Installed by SuiteCraft\nExec={}\nIcon={}\nTerminal=false\nCategories=Utility;\n",app.name.replace('\n'," "),desktop_escape(Path::new(&item.executable_path)),icon.replace('\n',""));
-    fs::write(path, body)
-        .map_err(|e| format!("App instalado, mas o atalho não pôde ser criado: {e}"))
+    platform::inspect_root(Path::new(path))
 }
 
 pub async fn install(
@@ -158,10 +97,17 @@ pub async fn install(
             .unwrap_or("Diretório sem permissão de escrita".into()));
     }
     let dir = PathBuf::from(root).join(&app.id);
+    let final_path = dir.join(format!("{}.AppImage", app.id));
+    if final_path.exists()
+        && !read_installed()?.iter().any(|item| {
+            item.app_id == app.id && Path::new(&item.executable_path) == final_path.as_path()
+        })
+    {
+        return Err("Já existe um arquivo nesse destino que não pertence a uma instalação registrada; ele não será sobrescrito.".into());
+    }
     tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|e| format!("Não foi possível criar o diretório: {e}"))?;
-    let final_path = dir.join(format!("{}.AppImage", app.id));
     let temp = dir.join(format!(".{}.download", app.id));
     let response = reqwest::Client::builder()
         .user_agent("SuiteCraft/0.1")
@@ -240,18 +186,57 @@ pub async fn install(
             "Falha ao promover a nova versão; a anterior foi restaurada: {e}"
         ));
     }
-    let item = InstalledApp {
+    let mut item = InstalledApp {
         app_id: app.id.clone(),
         version: release.version,
         executable_path: final_path.to_string_lossy().into_owned(),
         installed_at: chrono::Utc::now().to_rfc3339(),
+        icon_path: None,
     };
-    let mut items = read_installed()?;
-    items.retain(|x| x.app_id != item.app_id);
-    items.push(item.clone());
-    write_installed(&items)?;
-    shortcut(&app, &item)?;
+    let finalize = (|| -> Result<(), String> {
+        item.icon_path = platform::integrate(&app.id, &app.name, &final_path)?
+            .map(|x| x.to_string_lossy().into_owned());
+        let mut items = read_installed()?;
+        items.retain(|x| x.app_id != item.app_id);
+        items.push(item.clone());
+        write_installed(&items)
+    })();
+    if let Err(error) = finalize {
+        let _ = fs::remove_file(&final_path);
+        if backup.exists() {
+            let _ = fs::rename(&backup, &final_path);
+            let _ = platform::integrate(&app.id, &app.name, &final_path);
+        } else {
+            let _ = platform::remove_integration(&app.id);
+        }
+        return Err(format!(
+            "Falha ao concluir a instalação; a versão anterior foi restaurada: {error}"
+        ));
+    }
+    if backup.exists() {
+        let _ = fs::remove_file(backup);
+    }
     Ok(item)
+}
+pub fn icon_data(id: &str) -> Result<Option<String>, String> {
+    if !valid_id(id) {
+        return Err("ID inválido".into());
+    }
+    let Some(path) = read_installed()?
+        .into_iter()
+        .find(|x| x.app_id == id)
+        .and_then(|x| x.icon_path)
+    else {
+        return Ok(None);
+    };
+    let bytes = platform::read_valid_icon(Path::new(&path))?;
+    let Some((mime, bytes)) = bytes else {
+        return Ok(None);
+    };
+    Ok(Some(format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    )))
 }
 pub async fn launch(id: String) -> Result<(), String> {
     if !valid_id(&id) {
@@ -282,13 +267,13 @@ pub fn remove(id: String) -> Result<(), String> {
     if path.file_name().and_then(|x| x.to_str()) != Some(&format!("{id}.AppImage")) {
         return Err("Caminho registrado não passou na validação de segurança".into());
     }
+    if !platform::inspect_root(path.parent().unwrap_or(Path::new("/"))).writable {
+        return Err("O caminho registrado está fora da raiz de instalação permitida".into());
+    }
     if path.exists() {
         fs::remove_file(path).map_err(|e| e.to_string())?
     }
-    let desktop = desktop_path(&id)?;
-    if desktop.exists() {
-        fs::remove_file(desktop).map_err(|e| e.to_string())?
-    }
+    platform::remove_integration(&id)?;
     items.retain(|x| x.app_id != id);
     write_installed(&items)
 }

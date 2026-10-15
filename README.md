@@ -21,6 +21,10 @@ SuiteCraft aims to provide:
 
 The repository currently contains a Tauri 2 application structure with a React and TypeScript interface and a Rust system layer. The prototype includes catalog views, custom repository entries, GitHub release discovery, conservative AppImage selection, and user-directed installation. It is not yet production-ready.
 
+### Linux Alpha limitations
+
+The Alpha installs per user in `~/.local/opt/suitecraft/apps/<app-id>/`. Global `/opt` installation remains disabled until an audited privilege helper is available; the graphical application is never run as root. SuiteCraft can reuse a validated raster icon from an existing desktop entry whose `Exec` resolves to the installed AppImage. Safe extraction of icons embedded inside an AppImage is not implemented yet, and SuiteCraft deliberately does not invoke the untrusted AppImage runtime with `--appimage-extract`; when no trusted icon is available, the UI uses an empty icon slot and the generated desktop entry omits `Icon=`.
+
 ## Initial catalog
 
 The initial planned catalog contains:

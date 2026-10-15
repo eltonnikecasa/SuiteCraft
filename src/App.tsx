@@ -8,6 +8,7 @@ import { embeddedCatalog, normalizeGithubUrl } from "./catalog";
 import { resolveLocale, translate, type LanguagePreference, type TranslationKey } from "./i18n";
 import { loadCustomCatalog, saveCustomCatalog } from "./storage";
 import type { Activity, CatalogApp, InstalledApp, ReleaseInfo } from "./types";
+import "./icon.css";
 
 type Filter = "all" | "installed" | "available" | "updates";
 const filterKeys: Record<Filter, TranslationKey> = {
@@ -31,6 +32,7 @@ export default function App() {
   const t = (key: TranslationKey, values?: Record<string, string | number>) => translate(locale, key, values);
   const [custom, setCustom] = useState(loadCustomCatalog);
   const [installed, setInstalled] = useState<InstalledApp[]>([]);
+  const [installedIcons, setInstalledIcons] = useState<Record<string, string>>({});
   const [releases, setReleases] = useState<Record<string, ReleaseInfo>>({});
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
@@ -55,6 +57,10 @@ export default function App() {
     if (!isTauri()) { setRootWritable(false); return; }
     api.inspectDirectory(value).then(result => setRootWritable(result.writable)).catch(() => setRootWritable(false));
   };
+  const refreshIcons = async (items: InstalledApp[]) => {
+    const entries = await Promise.all(items.map(async item => [item.appId, await api.appIcon(item.appId).catch(() => null)] as const));
+    setInstalledIcons(Object.fromEntries(entries.filter((entry): entry is readonly [string, string] => Boolean(entry[1]))));
+  };
   const refresh = async (force = false) => {
     if (!isTauri()) { setNotice(t("error.preview")); return; }
     const configured = apps.filter(app => app.repositoryUrl);
@@ -67,7 +73,7 @@ export default function App() {
     inspect(root);
     if (isTauri()) {
       api.languagePreference().then(value => setPreference(value)).catch(() => setPreference("system"));
-      api.installed().then(setInstalled).catch(() => undefined);
+      api.installed().then(items => { setInstalled(items); void refreshIcons(items); }).catch(() => undefined);
       api.releases(apps.filter(app => app.repositoryUrl)).then(setReleases).catch(() => undefined);
     }
   }, []); // Initial desktop state only.
@@ -105,13 +111,15 @@ export default function App() {
     try {
       const item = await api.install(app, release, root);
       setInstalled(state => [...state.filter(value => value.appId !== app.id), item]);
+      const icon = await api.appIcon(app.id).catch(() => null);
+      setInstalledIcons(state => { const next = { ...state }; if (icon) next[app.id] = icon; else delete next[app.id]; return next; });
       setNotice(t(updating ? "status.updated" : "status.installed", { name: app.name }));
     } catch { setNotice(t("error.install", { name: app.name })); }
     finally { setActivity(state => { const next = { ...state }; delete next[app.id]; return next; }); }
   };
   const removeInstalled = async (app: CatalogApp) => {
     if (!window.confirm(t("confirm.remove", { name: app.name }))) return;
-    try { await api.remove(app.id); setInstalled(state => state.filter(item => item.appId !== app.id)); setNotice(t("status.removed", { name: app.name })); }
+    try { await api.remove(app.id); setInstalled(state => state.filter(item => item.appId !== app.id)); setInstalledIcons(state => { const next = { ...state }; delete next[app.id]; return next; }); setNotice(t("status.removed", { name: app.name })); }
     catch { setNotice(t("error.remove", { name: app.name })); }
   };
 
@@ -144,7 +152,7 @@ export default function App() {
         const local = installedMap[app.id], release = releases[app.id], busy = activity[app.id];
         const reason = !app.repositoryUrl ? t("card.sourcePending") : !release ? t("card.releasePending") : !release.asset ? t("card.assetUnavailable") : !rootWritable ? t("settings.directoryBlocked") : undefined;
         return <article className={!local ? "muted-app" : ""} key={app.id}>
-          <div className="card-top"><div className="app-icon">{app.iconUrl ? <img src={app.iconUrl} alt="" /> : <Box />}</div><span className="category">{category(app)}</span>{app.custom && <span className="custom">{t("card.custom")}</span>}</div>
+          <div className="card-top"><div className="app-icon">{(installedIcons[app.id] || app.iconUrl) && <img src={installedIcons[app.id] || app.iconUrl} alt="" />}</div><span className="category">{category(app)}</span>{app.custom && <span className="custom">{t("card.custom")}</span>}</div>
           <h2>{app.name}</h2><p>{description(app)}</p>
           <div className="versions"><span>{t("card.installedVersion")} <b>{local?.version || "—"}</b></span><span>{t("card.latestVersion")} <b>{release?.version || "—"}</b></span></div>
           {busy ? <button className="primary" disabled><LoaderCircle className="spin" /> {busy.message || t("status.checking")}</button>

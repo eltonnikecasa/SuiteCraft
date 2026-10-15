@@ -1,0 +1,10 @@
+.app-icon {
+  border: 1px dashed #d9dfe7;
+  background: #f7f8fa;
+  color: #9aa4b2;
+}
+
+.app-icon:has(img) {
+  border: 0;
+  background: transparent;
+}

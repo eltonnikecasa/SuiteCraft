@@ -15,6 +15,7 @@ coverage/
 target/
 src-tauri/target/
 .tauri/
+src-tauri/gen/
 
 # Logs
 *.log

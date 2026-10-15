@@ -9,5 +9,5 @@ export interface CatalogApp {
 }
 export interface ReleaseAsset { name: string; url: string; size: number; checksum?: string }
 export interface ReleaseInfo { version: string; releaseUrl: string; publishedAt?: string; asset?: ReleaseAsset; reason?: string; cached: boolean }
-export interface InstalledApp { appId: string; version: string; executablePath: string; installedAt: string }
+export interface InstalledApp { appId: string; version: string; executablePath: string; installedAt: string; iconPath?: string }
 export type Activity = { appId: string; kind: "loading" | "installing" | "error"; message?: string; progress?: number };

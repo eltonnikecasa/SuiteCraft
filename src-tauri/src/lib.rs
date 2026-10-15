@@ -2,6 +2,7 @@ mod github;
 mod install;
 mod localization;
 mod models;
+mod platform;
 use github::ReleaseCache;
 use models::{CatalogApp, DirectoryStatus, InstalledApp, ReleaseInfo};
 use std::collections::HashMap;
@@ -40,9 +41,11 @@ fn inspect_install_directory(path: String) -> DirectoryStatus {
 }
 #[tauri::command]
 fn suggest_user_install_root() -> Result<String, String> {
-    dirs::data_local_dir()
-        .map(|x| x.join("suitecraft/apps").to_string_lossy().into_owned())
-        .ok_or("Diretório local do usuário indisponível".into())
+    platform::user_install_root().map(|x| x.to_string_lossy().into_owned())
+}
+#[tauri::command]
+fn get_app_icon(app_id: String) -> Result<Option<String>, String> {
+    install::icon_data(&app_id)
 }
 #[tauri::command]
 fn get_language_preference() -> Result<String, String> {
@@ -64,6 +67,7 @@ pub fn run() {
             remove_app,
             inspect_install_directory,
             suggest_user_install_root,
+            get_app_icon,
             get_language_preference,
             set_language_preference
         ])

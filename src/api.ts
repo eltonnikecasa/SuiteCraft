@@ -10,6 +10,7 @@ export const api = {
   remove: (appId:string) => invoke<void>("remove_app", { appId }),
   inspectDirectory: (path:string) => invoke<{writable:boolean; reason?:string}>("inspect_install_directory", { path }),
   homeInstallRoot: () => invoke<string>("suggest_user_install_root"),
+  appIcon: (appId:string) => invoke<string | null>("get_app_icon", { appId }),
   languagePreference: () => invoke<LanguagePreference>("get_language_preference"),
   setLanguagePreference: (language:LanguagePreference) => invoke<void>("set_language_preference", { language })
 };

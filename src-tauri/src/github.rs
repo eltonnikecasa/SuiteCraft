@@ -157,7 +157,7 @@ pub async fn all(
                     .lock()
                     .map_err(|_| "Cache indisponível")?
                     .insert(app.id.clone(), (Instant::now(), info.clone()));
-                result.insert(app.id, info)
+                result.insert(app.id, info);
             }
             Err(reason) => {
                 result.insert(

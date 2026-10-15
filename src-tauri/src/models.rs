@@ -42,6 +42,8 @@ pub struct InstalledApp {
     pub version: String,
     pub executable_path: String,
     pub installed_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_path: Option<String>,
 }
 #[derive(Debug, Serialize)]
 pub struct DirectoryStatus {
