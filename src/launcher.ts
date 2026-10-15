@@ -1,8 +1,13 @@
 export type LauncherAction = "install" | "open" | "update" | "refresh" | "configure" | "remove";
+export type InstallationKnowledge = "loading" | "ready" | "error";
 
 export function launcherActions(installed: boolean, installable: boolean, updateAvailable: boolean): LauncherAction[] {
   if (!installed) return [...(installable ? ["install" as const] : []), "refresh", "configure"];
   return ["open", ...(updateAvailable ? ["update" as const] : []), "refresh", "configure", "remove"];
+}
+
+export function safeLauncherActions(state: InstallationKnowledge, installed: boolean, installable: boolean, updateAvailable: boolean): LauncherAction[] {
+  return state === "ready" ? launcherActions(installed, installable, updateAvailable) : ["configure"];
 }
 
 export function fallbackLabel(name: string): string {

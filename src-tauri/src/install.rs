@@ -5,6 +5,7 @@ use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use std::{
     fs,
+    io::Read,
     path::{Path, PathBuf},
 };
 use tokio::io::AsyncWriteExt;
@@ -24,13 +25,69 @@ fn data_dir() -> Result<PathBuf, String> {
 fn state_path() -> Result<PathBuf, String> {
     Ok(data_dir()?.join("installed.json"))
 }
-pub fn read_installed() -> Result<Vec<InstalledApp>, String> {
+fn read_state() -> Result<Vec<InstalledApp>, String> {
     let path = state_path()?;
     if !path.exists() {
         return Ok(vec![]);
     }
     let bytes = fs::read(path).map_err(|e| e.to_string())?;
     serde_json::from_slice(&bytes).map_err(|e| format!("Estado local inválido: {e}"))
+}
+fn reconcile_from_root(
+    mut items: Vec<InstalledApp>,
+    root: &Path,
+) -> Result<(Vec<InstalledApp>, bool), String> {
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((items, false)),
+        Err(error) => {
+            return Err(format!(
+                "Não foi possível consultar instalações existentes: {error}"
+            ))
+        }
+    };
+    let mut changed = false;
+    for entry in entries.take(4096).flatten() {
+        let Some(id) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if !valid_id(&id) || items.iter().any(|item| item.app_id == id) {
+            continue;
+        }
+        let path = entry.path().join(format!("{id}.AppImage"));
+        let Ok(metadata) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if !metadata.file_type().is_file() || metadata.len() < 4 {
+            continue;
+        }
+        let mut magic = [0_u8; 4];
+        if fs::File::open(&path)
+            .and_then(|mut file| file.read_exact(&mut magic))
+            .is_err()
+            || magic != *b"\x7fELF"
+        {
+            continue;
+        }
+        items.push(InstalledApp {
+            app_id: id,
+            version: String::new(),
+            executable_path: path.to_string_lossy().into_owned(),
+            installed_at: String::new(),
+            icon_path: None,
+        });
+        changed = true;
+    }
+    Ok((items, changed))
+}
+pub fn read_installed() -> Result<Vec<InstalledApp>, String> {
+    let items = read_state()?;
+    let root = platform::user_install_root()?;
+    let (items, changed) = reconcile_from_root(items, &root)?;
+    if changed {
+        write_installed(&items)?;
+    }
+    Ok(items)
 }
 fn write_installed(items: &[InstalledApp]) -> Result<(), String> {
     let dir = data_dir()?;
@@ -276,4 +333,55 @@ pub fn remove(id: String) -> Result<(), String> {
     platform::remove_integration(&id)?;
     items.retain(|x| x.app_id != id);
     write_installed(&items)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_root(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "suitecraft-install-test-{name}-{}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn reconciles_an_existing_appimage_without_moving_it() {
+        let root = test_root("existing");
+        let app_dir = root.join("deckcraft");
+        fs::create_dir_all(&app_dir).unwrap();
+        let appimage = app_dir.join("deckcraft.AppImage");
+        fs::write(&appimage, b"\x7fELFexisting-content").unwrap();
+
+        let (items, changed) = reconcile_from_root(vec![], &root).unwrap();
+        assert!(changed);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].app_id, "deckcraft");
+        assert_eq!(items[0].executable_path, appimage.to_string_lossy());
+        assert_eq!(fs::read(&appimage).unwrap(), b"\x7fELFexisting-content");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reconciliation_is_idempotent_and_rejects_unsafe_entries() {
+        let root = test_root("safe");
+        fs::create_dir_all(root.join("soundcraft")).unwrap();
+        fs::write(root.join("soundcraft/soundcraft.AppImage"), b"\x7fELFapp").unwrap();
+        fs::create_dir_all(root.join("INVALID ID")).unwrap();
+        fs::write(root.join("INVALID ID/INVALID ID.AppImage"), b"\x7fELFapp").unwrap();
+
+        let (first, changed) = reconcile_from_root(vec![], &root).unwrap();
+        let (second, changed_again) = reconcile_from_root(first, &root).unwrap();
+        assert!(changed);
+        assert!(!changed_again);
+        assert_eq!(
+            second
+                .iter()
+                .map(|item| item.app_id.as_str())
+                .collect::<Vec<_>>(),
+            ["soundcraft"]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
 }
