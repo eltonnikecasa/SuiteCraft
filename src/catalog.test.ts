@@ -8,6 +8,10 @@ const installed: InstalledApp = { appId: manual.id, version: "1.0.0", executable
 const release = (version: string, reason?: string): ReleaseInfo => ({ version, releaseUrl: "", cached: false, reason, asset: version ? { name: "tool-x86_64.AppImage", url: "https://github.com/a", size: 1 } : undefined });
 
 describe("unified catalog", () => {
+  it("contains only the thirteen API-validated default repositories", () => {
+    expect(embeddedCatalog).toHaveLength(13);
+    expect(embeddedCatalog.every(app => app.repositoryUrl === `https://github.com/${app.id === "solidcraft" ? "bherbruck" : "storytold"}/${app.id}`)).toBe(true);
+  });
   it("merges defaults and manual entries and persists default edits/disabled state", () => {
     const state = { manual: [manual], defaultOverrides: { deckcraft: { name: "Deck edited", repositoryUrl: "https://github.com/acme/deck" } }, disabledIds: ["deckcraft", manual.id] };
     const apps = mergeCatalog(state);

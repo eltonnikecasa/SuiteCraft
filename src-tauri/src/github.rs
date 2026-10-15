@@ -13,13 +13,13 @@ impl Default for ReleaseCache {
         Self(Mutex::new(HashMap::new()))
     }
 }
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct GithubAsset {
     name: String,
     browser_download_url: String,
     size: u64,
 }
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct GithubRelease {
     tag_name: String,
     html_url: String,
@@ -72,7 +72,41 @@ pub fn select_asset(assets: &[(String, String, u64)], rule: &AssetRule) -> Optio
                 checksum: None,
             })
         })
-        .next()
+        .min_by(|left, right| {
+            left.name
+                .to_lowercase()
+                .cmp(&right.name.to_lowercase())
+                .then(left.name.cmp(&right.name))
+        })
+}
+
+fn select_release(
+    releases: Vec<GithubRelease>,
+    rule: &AssetRule,
+) -> Option<(GithubRelease, ReleaseAsset)> {
+    releases
+        .into_iter()
+        .filter(|release| !release.draft)
+        .filter_map(|release| {
+            let candidates = release
+                .assets
+                .iter()
+                .map(|asset| {
+                    (
+                        asset.name.clone(),
+                        asset.browser_download_url.clone(),
+                        asset.size,
+                    )
+                })
+                .collect::<Vec<_>>();
+            select_asset(&candidates, rule).map(|asset| (release, asset))
+        })
+        .max_by(|(left, _), (right, _)| {
+            left.published_at
+                .cmp(&right.published_at)
+                .then(right.prerelease.cmp(&left.prerelease))
+                .then(left.tag_name.cmp(&right.tag_name))
+        })
 }
 pub async fn check(app: &CatalogApp, client: &reqwest::Client) -> Result<ReleaseInfo, String> {
     let repo = repo_slug(
@@ -82,43 +116,33 @@ pub async fn check(app: &CatalogApp, client: &reqwest::Client) -> Result<Release
     )?;
     let response = client
         .get(format!(
-            "https://api.github.com/repos/{repo}/releases/latest"
+            "https://api.github.com/repos/{repo}/releases?per_page=100"
         ))
         .send()
         .await
         .map_err(|e| format!("Falha de rede: {e}"))?;
     if response.status() == reqwest::StatusCode::NOT_FOUND {
-        return Err("Nenhum release estável publicado".into());
+        return Err("Repositório não encontrado ou indisponível".into());
     }
     if !response.status().is_success() {
         return Err(format!("GitHub respondeu HTTP {}", response.status()));
     }
-    let release: GithubRelease = response
+    let releases: Vec<GithubRelease> = response
         .json()
         .await
         .map_err(|e| format!("Resposta inválida do GitHub: {e}"))?;
-    if release.draft || release.prerelease {
-        return Err("O release retornado não é estável".into());
-    }
-    let candidates = release
-        .assets
-        .into_iter()
-        .map(|x| (x.name, x.browser_download_url, x.size))
-        .collect::<Vec<_>>();
-    let asset = select_asset(&candidates, &app.asset_rule);
+    let (release, asset) = select_release(releases, &app.asset_rule).ok_or_else(|| {
+        format!(
+            "Nenhum release oficial contém AppImage {} compatível",
+            app.asset_rule.architecture
+        )
+    })?;
     Ok(ReleaseInfo {
         version: release.tag_name,
         release_url: release.html_url,
         published_at: release.published_at,
-        reason: if asset.is_none() {
-            Some(format!(
-                "Release sem AppImage {} compatível",
-                app.asset_rule.architecture
-            ))
-        } else {
-            None
-        },
-        asset,
+        reason: None,
+        asset: Some(asset),
         cached: false,
     })
 }
@@ -214,5 +238,70 @@ mod tests {
     fn validates_repository_origin() {
         assert!(repo_slug("https://github.com/acme/app").is_ok());
         assert!(repo_slug("https://example.com/acme/app").is_err())
+    }
+    #[test]
+    fn selects_latest_compatible_release_including_prereleases() {
+        let releases = vec![
+            GithubRelease {
+                tag_name: "v1.0.0".into(),
+                html_url: "stable".into(),
+                published_at: Some("2026-01-01T00:00:00Z".into()),
+                draft: false,
+                prerelease: false,
+                assets: vec![GithubAsset {
+                    name: "tool-linux-x86_64.AppImage".into(),
+                    browser_download_url: "stable-asset".into(),
+                    size: 10,
+                }],
+            },
+            GithubRelease {
+                tag_name: "v1.1.0-alpha".into(),
+                html_url: "alpha".into(),
+                published_at: Some("2026-02-01T00:00:00Z".into()),
+                draft: false,
+                prerelease: true,
+                assets: vec![GithubAsset {
+                    name: "tool-linux-x86_64.AppImage".into(),
+                    browser_download_url: "alpha-asset".into(),
+                    size: 10,
+                }],
+            },
+        ];
+        let (release, asset) = select_release(releases, &rule()).unwrap();
+        assert_eq!(release.tag_name, "v1.1.0-alpha");
+        assert_eq!(asset.url, "alpha-asset");
+    }
+    #[test]
+    fn ignores_newer_release_without_compatible_asset() {
+        let releases = vec![
+            GithubRelease {
+                tag_name: "v1.0.0".into(),
+                html_url: "compatible".into(),
+                published_at: Some("2026-01-01T00:00:00Z".into()),
+                draft: false,
+                prerelease: false,
+                assets: vec![GithubAsset {
+                    name: "tool-linux-x86_64.AppImage".into(),
+                    browser_download_url: "compatible-asset".into(),
+                    size: 10,
+                }],
+            },
+            GithubRelease {
+                tag_name: "v2.0.0".into(),
+                html_url: "arm".into(),
+                published_at: Some("2026-02-01T00:00:00Z".into()),
+                draft: false,
+                prerelease: false,
+                assets: vec![GithubAsset {
+                    name: "tool-linux-aarch64.AppImage".into(),
+                    browser_download_url: "arm-asset".into(),
+                    size: 10,
+                }],
+            },
+        ];
+        assert_eq!(
+            select_release(releases, &rule()).unwrap().0.tag_name,
+            "v1.0.0"
+        );
     }
 }

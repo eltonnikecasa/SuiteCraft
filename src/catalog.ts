@@ -1,6 +1,21 @@
 import type { CatalogApp, CatalogOverride, CatalogState, InstalledApp, ReleaseInfo } from "./types";
 
-const names = ["DeckCraft", "SoundCraft", "GridCraft", "FilmCraft", "WordCraft", "PhotoCraft", "VectorCraft", "LightCraft", "EffectCraft", "DesignCraft", "PdfCraft", "CADCraft"];
+const defaultRepositories: Record<string, string> = {
+  deckcraft: "https://github.com/storytold/deckcraft",
+  soundcraft: "https://github.com/storytold/soundcraft",
+  gridcraft: "https://github.com/storytold/gridcraft",
+  filmcraft: "https://github.com/storytold/filmcraft",
+  wordcraft: "https://github.com/storytold/wordcraft",
+  photocraft: "https://github.com/storytold/photocraft",
+  vectorcraft: "https://github.com/storytold/vectorcraft",
+  lightcraft: "https://github.com/storytold/lightcraft",
+  effectcraft: "https://github.com/storytold/effectcraft",
+  designcraft: "https://github.com/storytold/designcraft",
+  pdfcraft: "https://github.com/storytold/pdfcraft",
+  cadcraft: "https://github.com/storytold/cadcraft",
+  solidcraft: "https://github.com/bherbruck/solidcraft"
+};
+const names = ["DeckCraft", "SoundCraft", "GridCraft", "FilmCraft", "WordCraft", "PhotoCraft", "VectorCraft", "LightCraft", "EffectCraft", "DesignCraft", "PdfCraft", "CADCraft", "SolidCraft"];
 const base = (name: string, repositoryUrl?: string): CatalogApp => ({
   schemaVersion: 1, id: name.toLowerCase(), name, description: name.toLowerCase(),
   category: name === "SolidCraft" || name === "CADCraft" ? "engineering" : "creativity",
@@ -8,7 +23,7 @@ const base = (name: string, repositoryUrl?: string): CatalogApp => ({
   assetRule: { extensions: [".appimage"], include: ["x86_64", "amd64"], exclude: ["arm", "aarch64", "zsync", "sha256", "debug"], architecture: "x86_64" },
   origin: "default"
 });
-export const embeddedCatalog: CatalogApp[] = [...names.map(name => base(name)), base("SolidCraft", "https://github.com/bherbruck/solidcraft")];
+export const embeddedCatalog: CatalogApp[] = names.map(name => base(name, defaultRepositories[name.toLowerCase()]));
 
 export const normalizeGithubUrl = (url: string) => {
   const match = url.trim().match(/^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/i);
