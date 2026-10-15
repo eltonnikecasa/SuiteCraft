@@ -1,0 +1,29 @@
+Implementação concluída e commitada localmente no commit 5f72ef5.
+
+- AppImage Linux exclusivo configurado.
+- scripts/build.sh criado com validações, 15 jobs e runtime AppImage em cache.
+- Workflow de release para tags v*, com alpha como prerelease e publicação apenas do AppImage.
+- Instalação Alpha restrita a ~/.local/opt/suitecraft/apps/<app-id>/; /opt permanece bloqueado sem helper administrativo.
+- Validação contra traversal e sobrescrita de instalações não registradas.
+- Rollback da versão anterior em falhas de atualização.
+- Integrações Linux isoladas, com stubs de compilação Windows.
+- Ícones raster validados, associados por Exec canonizado e exibidos no card/menu; ausência de ícone usa slot neutro.
+- Build/cache e schemas gerados permanecem ignorados.
+
+Validações:
+
+- npm run build: passou.
+- npm test: 4 testes passaram.
+- cargo test: 5 testes passaram.
+- scripts/build.sh: passou.
+- git diff --check e cargo fmt --check: passaram.
+- Árvore Git limpa após o commit.
+
+AppImage gerado:
+
+/srv/ENCSIS/projects/SuiteCraft/src-tauri/target/release/bundle/appimage/SuiteCraft_0.1.0_amd64.AppImage
+
+- Tamanho: 105 MiB
+- SHA-256: 913de52899221367a04f5846d8ea30f8e48326d8cb5aef58aa397d04d1d6e6ab
+
+Limitação documentada: a extração segura de ícones internos do AppImage ainda está pendente. O Alpha não executa --appimage-extract; reutiliza apenas ícones confiáveis encontrados em integrações .desktop correspondentes. Próximo passo recomendado: implementar um leitor SquashFS limitado e defensivo para extrair .desktop e PNG sem executar o runtime do aplicativo.

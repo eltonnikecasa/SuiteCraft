@@ -1,0 +1,19 @@
+.catalog-fields {
+  display: grid;
+  gap: 8px;
+}
+.catalog-fields input {
+  min-width: 0;
+  border: 1px solid #dbe1e8;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 12px;
+}
+.catalog-fields button {
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 14px;
+  background: #172437;
+  color: white;
+}
+.catalog-disabled { opacity: .55; }

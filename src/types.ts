@@ -5,8 +5,10 @@ export interface AssetRule { extensions: string[]; include: string[]; exclude: s
 export interface CatalogApp {
   schemaVersion: 1; id: string; name: string; description: string; category: string;
   repositoryUrl?: string; iconUrl?: string; platform: Platform; packageType: PackageType;
-  assetRule: AssetRule; custom?: boolean;
+  assetRule: AssetRule; origin?: "default" | "manual"; disabled?: boolean;
 }
+export interface CatalogOverride { name?: string; repositoryUrl?: string | null }
+export interface CatalogState { manual: CatalogApp[]; defaultOverrides: Record<string, CatalogOverride>; disabledIds: string[] }
 export interface ReleaseAsset { name: string; url: string; size: number; checksum?: string }
 export interface ReleaseInfo { version: string; releaseUrl: string; publishedAt?: string; asset?: ReleaseAsset; reason?: string; cached: boolean }
 export interface InstalledApp { appId: string; version: string; executablePath: string; installedAt: string; iconPath?: string }
